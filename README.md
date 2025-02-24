@@ -3,7 +3,7 @@
 AirWin is a Windows application that implements Apple's AirDrop and AirPlay protocols, allowing Windows PCs to interact seamlessly with Apple devices. It enables file sharing via AirDrop and screen sharing via AirPlay between Windows and Apple devices.
 
 ## DISCALIMER
-the application is under development, currently (03/02/2025) the application smoothly finds devices on local network and only if you are connected to the same network, file and video(airplay) sharing are the main purpose of the project.
+the application is under development, currently (03/02/2025) the application smoothly finds devices on local network and only if you are connected to the same network, file and video(airdrop) sharing are the main purpose of the project.
 ## Features
 
 - **AirDrop Support**: Send and receive files between Windows and Apple devices

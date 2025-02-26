@@ -1,0 +1,9 @@
+@echo off
+echo Cleaning previous build...
+cargo clean
+echo Waiting 5 seconds...
+timeout /t 5 /nobreak > nul
+echo Building with reduced parallelism...
+set RUSTFLAGS=-C codegen-units=1
+cargo build --jobs=1
+echo Done!

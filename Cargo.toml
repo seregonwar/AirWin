@@ -9,8 +9,9 @@ mdns-sd = { version = "0.7.5", features = ["async"] }
 eframe = { version = "0.21.0", features = ["persistence"] }
 egui = "0.21.0"
 anyhow = "1.0"
+thiserror = "1.0"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 if-addrs = "0.10.1"
 local-ip-address = "0.5.1"
 socket2 = { version = "0.5", features = ["all"] }
@@ -27,4 +28,7 @@ rfd = "0.11"  # Removed xdg-portal feature for Windows compatibility
 rcgen = "0.10"
 tokio-native-tls = "0.3"
 native-tls = { version = "0.2", features = ["vendored"] }
+chrono = { version = "0.4", features = ["serde"] }
 
+[patch.crates-io]
+winapi = { git = "https://github.com/retep998/winapi-rs", branch = "0.3" }

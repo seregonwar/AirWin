@@ -51,7 +51,7 @@ AirWin uses mDNS (Multicast DNS) for service discovery and advertisement.  The a
 
 ## Building and Running
 
-1. **Clone the repository:** `git clone https://github.com/your-username/AirWin.git`
+1. **Clone the repository:** `git clone https://github.com/seregonwar/AirWin.git`
 2. **Navigate to the project directory:** `cd AirWin`
 3. **Build the project:** `cargo build --release`
 4. **Run the application (as administrator):** `cargo run --release`

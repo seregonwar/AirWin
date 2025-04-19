@@ -1,52 +1,99 @@
-# AirWin
+# 🚀 AirWin
 
-AirWin is a Windows application that implements Apple's AirDrop and AirPlay protocols, allowing Windows PCs to interact seamlessly with Apple devices. It enables file sharing via AirDrop and screen sharing via AirPlay between Windows and Apple devices.
+<p align="center">
+  <img src="https://img.shields.io/badge/C++-202124?style=for-the-badge&logo=c%2B%2B&logoColor=white" alt="C++ Badge"/>
+  <img src="https://img.shields.io/badge/version-v0.1.0b-blueviolet?style=for-the-badge" alt="Version Badge"/>
+  <img src="https://img.shields.io/github/stars/seregonwar/AirWin?style=for-the-badge&logo=github&color=yellow" alt="GitHub Stars"/>
+  <img src="https://img.shields.io/badge/license-MIT-2ea44f?style=for-the-badge&logo=open-source-initiative&logoColor=white" alt="License Badge"/>
+  <img src="https://img.shields.io/github/downloads/seregonwar/AirWin/total.svg?style=for-the-badge&color=orange&logo=cloud-download" alt="Total Downloads"/>
+</p>
 
-## DISCALIMER
-the application is under development, currently (03/02/2025) the application smoothly finds devices on local network and only if you are connected to the same network, file and video(airdrop) sharing are the main purpose of the project.
-## Features
+---
 
-- **AirDrop Support**: Send and receive files between Windows and Apple devices
-- **AirPlay Support**: Stream your Windows screen to Apple devices
-- **Device Discovery**: Automatic discovery of nearby Apple devices using mDNS
-- **Native Integration**: Appears as a native Mac device in the network
-- **Modern UI**: Built with egui for a clean and responsive interface
+## 📌 Overview
 
-## Requirements
+**AirWin** is a Windows application that implements Apple’s **AirDrop** and **AirPlay** protocols, allowing your PC to communicate and interact seamlessly with Apple devices.
 
-- Windows 10 or later
-- Network adapter with multicast support
-- Administrator privileges (for mDNS service)
+With AirWin you can:
+- 📤 Share files using AirDrop
+- 📺 Stream your screen using AirPlay  
+All operations work **locally** over your network, without cloud or third-party services.
 
-## Building from Source
+---
 
-1. Install Rust toolchain from [rustup.rs](https://rustup.rs/)
-2. Clone the repository
-3. Build the project:
+## ✨ Features
+
+- 🔁 **AirDrop**: Send and receive files between Windows PCs and Apple devices  
+- 🖥️ **AirPlay**: Stream your Windows screen to compatible Apple devices  
+- 📡 **Device Discovery**: Automatically discovers Apple devices using **mDNS**  
+- 🍏 **Native Integration**: Appears as a native Mac device on the network  
+- 🎨 **Modern Interface**: Clean and responsive UI
+
+---
+
+## 💻 System Requirements
+
+- 🧩 Windows 10 or later  
+- 🌐 Network adapter with **multicast** support  
+- 🔐 Run as administrator (required for mDNS service)
+
+---
+
+## 🧱 Building
+
+### 1. Install dependencies:
 ```bash
-cargo build --release
+sudo apt-get install cmake build-essential libboost-all-dev libssl-dev
 ```
 
-## Usage
+### 2. Clone the repository:
+```bash
+git clone https://github.com/seregonwar/AirWin.git
+```
 
-1. Run the application as administrator (required for mDNS service)
-2. The application will automatically start discovering nearby Apple devices
-3. For AirDrop:
-   - Click "Send File" to share files with nearby Apple devices
-4. For AirPlay:
-   - Click "Start Screen Receiving" to begin streaming your screen
+### 3. Build the project:
+```bash
+cd AirWin
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make
+```
 
-## Architecture
+---
 
-- **Device Discovery**: Uses mDNS for device discovery and service advertisement
-- **AirDrop**: Implements Apple's AirDrop protocol for file transfer
-- **AirPlay**: Implements screen capture and streaming functionality
-- **UI**: Uses egui for a native-looking interface
+## ▶️ Usage
 
-## License
+1. Run the application **as administrator**  
+2. AirWin will automatically start discovering nearby Apple devices  
+3. For **AirDrop**:
+   - Click on **“Send File”** to share files with nearby devices  
+4. For **AirPlay**:
+   - Click on **“Start Screen Streaming”** to broadcast your screen
 
-MIT License
+---
 
-## Contributing
+## 🧠 Architecture
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+- 🔍 **mDNS Discovery**: Uses multicast DNS to discover and advertise services  
+- 💾 **AirDrop Protocol**: Implements Apple’s protocol for peer-to-peer file transfer  
+- 📡 **AirPlay Engine**: Handles screen capturing and streaming  
+- 🧰 **UI**: Modern, responsive user interface (based on egui or custom UI)
+
+---
+
+## 📜 License
+
+This project is licensed under the **MIT License**.  
+See the `LICENSE` file for more details.
+
+---
+
+## 🤝 Contributing
+
+Contributions are **welcome**!  
+Feel free to open a **Pull Request** or report issues in the tracker.
+
+---
+
+> Built with ❤️ by [SeregonWar](https://github.com/seregonwar) 
+

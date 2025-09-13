@@ -1,110 +1,122 @@
-// Module declarations
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+// Expose crate modules
 mod network;
 mod protocols;
 mod ui;
 mod utils;
 
-use eframe::egui;
-use anyhow::Result;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use local_ip_address;
-use tracing;
-use std::time::Duration;
-
-// Import network types
-use network::DeviceDiscovery;
-use network::DiscoveredDevice;
-use network::ServiceType;
-
-// Import protocol types
-use protocols::airplay::AirPlay;
-use protocols::airplay::AirPlayStatus;
+use network::discovery::DeviceDiscovery;
+use network::ble::BleManager;
 use protocols::airdrop::AirDrop;
-use protocols::airdrop::AirDropStatus;
+use protocols::airplay::AirPlay;
+use protocols::awdl::{AwdlManager, AwdlManagerConfig};
 
-// Import UI
-use ui::MainWindow;
-
-struct AirWinApp {
-    window: MainWindow,
+/// Struttura principale dell'applicazione AirWin
+pub struct AirWinServices {
+    pub device_discovery: Arc<Mutex<DeviceDiscovery>>,
+    pub airdrop: Arc<Mutex<AirDrop>>,
+    pub airplay: Arc<Mutex<AirPlay>>,
+    pub ble: Arc<Mutex<BleManager>>,
+    pub awdl: Arc<Mutex<AwdlManager>>,
 }
 
-impl Default for AirWinApp {
-    fn default() -> Self {
-        // Initialize services
-        let discovery = Arc::new(DeviceDiscovery::new().expect("Failed to create device discovery"));
-        let airdrop = Arc::new(Mutex::new(AirDrop::new()));
-        let airplay = Arc::new(AirPlay::new());
-        
-        // Start discovery service
-        tokio::spawn({
-            let discovery = discovery.clone();
-            async move {
-                if let Err(e) = discovery.start_discovery().await {
-                    tracing::error!("Discovery error: {}", e);
-                }
-            }
-        });
+impl AirWinServices {
+    /// Crea una nuova istanza dei servizi AirWin
+    pub async fn new() -> anyhow::Result<Self> {
+        // Construct services with correct constructors
+        let discovery = DeviceDiscovery::new()?;
+        let airdrop = AirDrop::new();
+        let airplay = AirPlay::new();
+        let ble = BleManager::new().await?;
+        let awdl = AwdlManager::new(AwdlManagerConfig::default());
 
-        // Start AirDrop server
-        tokio::spawn({
-            let airdrop = airdrop.clone();
-            async move {
-                if let Err(e) = airdrop.lock().await.start_server().await {
-                    tracing::error!("AirDrop server error: {}. Make sure you're running as administrator and firewall allows connections", e);
-                }
-            }
-        });
-
-        // Start AirPlay server
-        tokio::spawn({
-            let airplay = airplay.clone();
-            async move {
-                if let Err(e) = airplay.start_server().await {
-                    tracing::error!("AirPlay server error: {}. Make sure you're running as administrator and firewall allows connections", e);
-                }
-            }
-        });
-
-        // Log network interfaces
-        tokio::spawn(async {
-            if let Ok(interfaces) = local_ip_address::list_afinet_netifas() {
-                for (name, ip) in interfaces {
-                    tracing::info!("Network interface: {} - IP: {}", name, ip);
-                }
-            }
-        });
-
-        Self {
-            window: MainWindow::new(discovery, airdrop, airplay),
+        Ok(Self {
+            device_discovery: Arc::new(Mutex::new(discovery)),
+            airdrop: Arc::new(Mutex::new(airdrop)),
+            airplay: Arc::new(Mutex::new(airplay)),
+            ble: Arc::new(Mutex::new(ble)),
+            awdl: Arc::new(Mutex::new(awdl)),
+        })
+    }
+    
+    /// Inizializza tutti i servizi
+    pub async fn initialize(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // Inizializza device discovery (mDNS)
+        {
+            let discovery = self.device_discovery.lock().await;
+            discovery.start_discovery().await?;
         }
+
+        // Avvia AirDrop HTTPS server e servizi mDNS
+        {
+            let airdrop = self.airdrop.lock().await;
+            airdrop.start_server().await?;
+        }
+
+        // Avvia server AirPlay per ricezione
+        {
+            let airplay = self.airplay.lock().await;
+            airplay.start_server().await?;
+        }
+
+        // Inizializza BLE
+        {
+            let mut ble = self.ble.lock().await;
+            ble.initialize().await?;
+        }
+
+        // Inizializza e avvia AWDL
+        {
+            let mut awdl = self.awdl.lock().await;
+            awdl.initialize().await?;
+        }
+        
+        Ok(())
     }
 }
 
-impl eframe::App for AirWinApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.window.update(ctx);
-    }
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Setup logging
-    utils::setup_logging();
-
-    let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(800.0, 600.0)),
-        min_window_size: Some(egui::vec2(600.0, 400.0)),
-        centered: true,
-        ..Default::default()
-    };
-
-    eframe::run_native(
-        "AirWin",
-        options,
-        Box::new(|_cc| Box::new(AirWinApp::default())),
-    ).map_err(|e| anyhow::anyhow!("Failed to start application: {}", e))?;
-
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Inizializza il logger
+    env_logger::init();
+    
+    // Crea un runtime separato per i servizi di background
+    let runtime = tokio::runtime::Runtime::new()?;
+    
+    // Crea i servizi AirWin nel runtime
+    let services = runtime.block_on(async {
+        match AirWinServices::new().await {
+            Ok(s) => Arc::new(s),
+            Err(e) => {
+                eprintln!("Errore nella creazione dei servizi: {}", e);
+                std::process::exit(1);
+            }
+        }
+    });
+    
+    // Inizializza i servizi in background
+    let services_clone = services.clone();
+    runtime.spawn(async move {
+        if let Err(e) = services_clone.initialize().await {
+            eprintln!("Errore nell'inizializzazione dei servizi: {}", e);
+            // Non terminiamo l'app, continuiamo con funzionalità limitate
+        }
+    });
+    
+    // Mantieni il runtime attivo in un thread separato
+    std::thread::spawn(move || {
+        runtime.block_on(async {
+            // Mantieni il runtime attivo
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+            }
+        });
+    });
+    
+    // Avvia l'interfaccia utente Iced nel thread principale
+    // Iced gestisce il proprio event loop, quindi non serve async qui
+    ui::run()?;
+    
     Ok(())
 }

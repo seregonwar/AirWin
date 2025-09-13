@@ -10,6 +10,7 @@ use socket2::{Socket, Domain, Type, Protocol};
 use super::interface::NetworkManager;
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct DiscoveredDevice {
 	pub name: String,
 	pub address: IpAddr,
@@ -54,6 +55,7 @@ pub enum ServiceType {
 	Presence,
 }
 
+#[allow(dead_code)]
 pub struct DeviceDiscovery {
 	mdns: Arc<ServiceDaemon>,
 	devices: Arc<Mutex<HashMap<String, DiscoveredDevice>>>,
@@ -62,6 +64,7 @@ pub struct DeviceDiscovery {
 }
 
 impl DeviceDiscovery {
+	#[allow(dead_code)]
 	fn check_network_availability() -> Result<()> {
 		info!("Checking network availability for mDNS...");
 		
@@ -204,12 +207,5 @@ impl DeviceDiscovery {
 	pub async fn get_devices(&self) -> Result<Vec<DiscoveredDevice>> {
 		let devices = self.devices.lock().await;
 		Ok(devices.values().cloned().collect())
-	}
-}
-
-impl Drop for DeviceDiscovery {
-	fn drop(&mut self) {
-		let rt = tokio::runtime::Runtime::new().unwrap();
-		rt.block_on(self.stop_discovery());
 	}
 }

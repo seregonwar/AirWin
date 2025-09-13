@@ -1,4 +1,3 @@
-use tracing::{Level, Subscriber};
 use tracing_subscriber::{
     fmt::{self, time::UtcTime},
     EnvFilter,

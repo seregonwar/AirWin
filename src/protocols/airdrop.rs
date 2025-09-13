@@ -10,11 +10,14 @@ use serde_json;
 use uuid::Uuid;
 use tracing::{info, warn, error};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
-use std::collections::HashMap;
+
 use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType};
-use tokio_native_tls::{TlsAcceptor, native_tls};
+use tokio_native_tls::{TlsAcceptor, native_tls, TlsConnector};
 use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 use socket2::{Socket, Domain, Type, Protocol};
+use super::apple_records::AppleRecords;
+use super::http_server::AirDropHttpServer;
+use mime_guess;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AirDropStatus {
@@ -47,6 +50,7 @@ pub struct AirDrop {
     connection: Arc<Mutex<Option<TcpStream>>>,
     mdns: Arc<Mutex<Option<ServiceDaemon>>>,
     udp_socket: Arc<Mutex<Option<UdpSocket>>>,
+    http_server: Arc<Mutex<Option<AirDropHttpServer>>>,
     pub status: Arc<Mutex<AirDropStatus>>,
 }
 
@@ -59,9 +63,78 @@ impl AirDrop {
             connection: Arc::new(Mutex::new(None)),
             mdns: Arc::new(Mutex::new(None)),
             udp_socket: Arc::new(Mutex::new(None)),
+            http_server: Arc::new(Mutex::new(None)),
             status: Arc::new(Mutex::new(AirDropStatus::Idle)),
         }
     }
+
+    pub async fn send_file_to(&self, addr: SocketAddr, file_path: PathBuf) -> Result<()> {
+        *self.status.lock().await = AirDropStatus::Connecting;
+
+        let file = File::open(&file_path)
+            .await
+            .context("Failed to open file")?;
+
+        let metadata = file.metadata().await?;
+        let transfer = FileTransfer {
+            id: Uuid::new_v4().to_string(),
+            name: file_path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            size: metadata.len(),
+            mime_type: mime_guess::from_path(&file_path)
+                .first_or_octet_stream()
+                .to_string(),
+        };
+
+        // Generate certificate for TLS
+        let (identity, _) = Self::generate_certificate().await?;
+        let connector = native_tls::TlsConnector::builder()
+            .identity(identity)
+            .build()?;
+        let connector = TlsConnector::from(connector);
+
+        // Establish TCP connection to target peer
+        let stream = TcpStream::connect(addr).await?;
+        *self.status.lock().await = AirDropStatus::Connected;
+
+        // Perform TLS handshake; server name must match CN used by server cert
+        let mut tls_stream = connector.connect("AirWin", stream).await?;
+
+        // Send a simple JSON handshake
+        let handshake = AirDropHandshake {
+            sender: "AirWin".to_string(),
+            receiver: "AirWin".to_string(),
+            files: vec![transfer],
+        };
+
+        let handshake_json = serde_json::to_string(&handshake)?;
+        tls_stream.write_all(handshake_json.as_bytes()).await?;
+        tls_stream.write_all(b"\n\n").await?;
+
+        // Stream file contents
+        let mut file = File::open(&file_path).await?;
+        let mut buffer = vec![0; 8192];
+        let mut sent = 0u64;
+
+        *self.status.lock().await = AirDropStatus::Transferring(0.0);
+
+        loop {
+            let n = file.read(&mut buffer).await?;
+            if n == 0 { break; }
+            tls_stream.write_all(&buffer[..n]).await?;
+            sent += n as u64;
+            let progress = (sent as f32 / metadata.len() as f32) * 100.0;
+            *self.transfer_progress.lock().await = progress;
+            *self.status.lock().await = AirDropStatus::Transferring(progress);
+        }
+
+        *self.status.lock().await = AirDropStatus::Connected;
+        *self.current_file.lock().await = Some(file_path);
+        Ok(())
+    }
+    
 
     pub async fn get_status(&self) -> AirDropStatus {
         self.status.lock().await.clone()
@@ -109,57 +182,64 @@ impl AirDrop {
     async fn register_mdns_services(&self) -> Result<()> {
         let mdns = ServiceDaemon::new().map_err(|e| anyhow!("Failed to initialize mDNS: {}", e))?;
         
-        let mut properties = HashMap::new();
-        // Required AirDrop properties with complete flags
-        properties.insert("flags".to_string(), "0x1".to_string());
-        properties.insert("protocol_version".to_string(), "2".to_string());
-        properties.insert("service_id".to_string(), Uuid::new_v4().simple().to_string());
-        properties.insert("service_type".to_string(), "1".to_string());
-        properties.insert("status_flags".to_string(), "0x1".to_string());
-        properties.insert("computerid".to_string(), Uuid::new_v4().simple().to_string());
-        properties.insert("systemid".to_string(), Uuid::new_v4().simple().to_string());
-        properties.insert("model".to_string(), "Windows".to_string());
-        properties.insert("name".to_string(), hostname::get()?.to_string_lossy().to_string());
-        properties.insert("supports_url".to_string(), "1".to_string());
-        properties.insert("supports_dvzip".to_string(), "1".to_string());
-        properties.insert("supports_dv".to_string(), "1".to_string());
-        properties.insert("supports_pipelining".to_string(), "1".to_string());
-        properties.insert("machine_id".to_string(), Uuid::new_v4().simple().to_string());
-        properties.insert("system_version".to_string(), "10.0".to_string());
-        properties.insert("supports_mixed_types".to_string(), "1".to_string());
-        properties.insert("supports_contacts".to_string(), "1".to_string());
-        properties.insert("supports_discover".to_string(), "1".to_string());
-        properties.insert("phash".to_string(), "00000000000000000000000000000000".to_string());
-        properties.insert("discoverable".to_string(), "1".to_string());
-        properties.insert("supports_airdrop".to_string(), "1".to_string());
-        properties.insert("supports_sharing".to_string(), "1".to_string());
-        properties.insert("supports_awdl".to_string(), "1".to_string());  // Added AWDL support
-        properties.insert("supports_ble".to_string(), "1".to_string());   // Added BLE support
+        // Use Apple-compatible TXT records
+        let airdrop_properties = AppleRecords::create_airdrop_txt_records()?;
+        let companion_properties = AppleRecords::create_companion_txt_records()?;
+        let device_info_properties = AppleRecords::create_device_info_txt_records()?;
         
-        // Register both TCP and UDP services
-        let tcp_service = ServiceInfo::new(
+        let hostname = hostname::get()?.to_string_lossy().to_string();
+        
+        // Register AirDrop TCP service on standard port
+        let airdrop_tcp_service = ServiceInfo::new(
             "_airdrop._tcp.local.",
-            &hostname::get()?.to_string_lossy().to_string(),
+            &hostname,
             "local.",
             "",
-            7000,  // Changed port to 7000
-            Some(properties.clone())
+            8771, // Standard AirDrop port
+            Some(airdrop_properties.clone())
         )?;
 
-        let udp_service = ServiceInfo::new(
+        // Register AirDrop UDP service
+        let airdrop_udp_service = ServiceInfo::new(
             "_airdrop._udp.local.",
-            &hostname::get()?.to_string_lossy().to_string(),
+            &hostname,
             "local.",
             "",
-            7000,  // Changed port to 7000
-            Some(properties)
+            8771, // Standard AirDrop port
+            Some(airdrop_properties)
         )?;
 
-        mdns.register(tcp_service)
-            .map_err(|e| anyhow!("Failed to register AirDrop TCP service: {}", e))?;
-        mdns.register(udp_service)
-            .map_err(|e| anyhow!("Failed to register AirDrop UDP service: {}", e))?;
+        // Register Companion Link service (for device pairing)
+        let companion_service = ServiceInfo::new(
+            "_companion-link._tcp.local.",
+            &hostname,
+            "local.",
+            "",
+            7001,
+            Some(companion_properties)
+        )?;
 
+        // Register Device Info service
+        let device_info_service = ServiceInfo::new(
+            "_device-info._tcp.local.",
+            &hostname,
+            "local.",
+            "",
+            7002,
+            Some(device_info_properties)
+        )?;
+
+        // Register all services
+        mdns.register(airdrop_tcp_service)
+            .map_err(|e| anyhow!("Failed to register AirDrop TCP service: {}", e))?;
+        mdns.register(airdrop_udp_service)
+            .map_err(|e| anyhow!("Failed to register AirDrop UDP service: {}", e))?;
+        mdns.register(companion_service)
+            .map_err(|e| anyhow!("Failed to register Companion Link service: {}", e))?;
+        mdns.register(device_info_service)
+            .map_err(|e| anyhow!("Failed to register Device Info service: {}", e))?;
+
+        info!("Successfully registered Apple-compatible mDNS services");
         *self.mdns.lock().await = Some(mdns);
 
         // Setup UDP multicast with explicit binding to all interfaces
@@ -176,16 +256,16 @@ impl AirDrop {
         params.distinguished_name.push(DnType::CommonName, "AirWin");
         params.distinguished_name.push(DnType::OrganizationName, "AirWin");
         params.distinguished_name.push(DnType::CountryName, "US");
-        
+
         let cert = Certificate::from_params(params)?;
+        // Keep a PEM string for optional display/diagnostics
         let cert_pem = cert.serialize_pem()?;
-        let key_pem = cert.serialize_private_key_pem();
-        
-        let identity = native_tls::Identity::from_pkcs8(
-            cert_pem.as_bytes(),
-            key_pem.as_bytes(),
-        )?;
-        
+        // Use DER for native-tls on Windows when constructing an Identity from PKCS#8
+        let cert_der = cert.serialize_der()?;
+        let key_der = cert.serialize_private_key_der();
+
+        let identity = native_tls::Identity::from_pkcs8(&cert_der, &key_der)?;
+
         Ok((identity, cert_pem))
     }
 
@@ -250,16 +330,25 @@ impl AirDrop {
         // Register mDNS services first
         self.register_mdns_services().await?;
 
-        // Try binding to all interfaces
+        // Initialize and start HTTPS server for AirDrop protocol
+        let mut http_server = AirDropHttpServer::new(8771); // Use standard AirDrop port
+        http_server.initialize().await?;
+        http_server.start().await?;
+        
+        *self.http_server.lock().await = Some(http_server);
+        info!("Started AirDrop HTTPS server on port 8771");
+
+        // Keep the old TCP listener for backward compatibility
         let v4_listener = match TcpListener::bind(("0.0.0.0", 7000)).await {
             Ok(listener) => {
-                info!("Started AirDrop IPv4 server on 0.0.0.0:7000");
+                info!("Started AirDrop IPv4 fallback server on 0.0.0.0:7000");
                 listener
             }
             Err(e) => {
-                error!("Failed to start AirDrop IPv4 server: {}", e);
-                *self.status.lock().await = AirDropStatus::Failed(format!("Server error: {}", e));
-                return Err(anyhow!("Failed to start AirDrop server. Try running as administrator or check firewall settings."));
+                warn!("Failed to start AirDrop IPv4 fallback server: {}", e);
+                // Don't fail completely if fallback server can't start
+                *self.status.lock().await = AirDropStatus::Connected;
+                return Ok(());
             }
         };
 

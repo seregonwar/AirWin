@@ -1,22 +1,39 @@
-use eframe::egui::{self, RichText};
+use eframe::egui::{self, RichText, Color32};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::network::{DeviceDiscovery, DiscoveredDevice, ServiceType};
 use crate::protocols::airplay::{AirPlay, AirPlayStatus};
 use crate::protocols::airdrop::{AirDrop, AirDropStatus};
+use crate::protocols::awdl::AwdlManager;
 use super::components::{self, DeviceCard, DeviceStatus, StyleConfig};
 use tokio::time::Duration;
+use std::net::SocketAddr;
+use rfd::FileDialog;
+use std::path::PathBuf;
+use tracing::{error, warn};
+
+#[derive(Clone, PartialEq)]
+#[allow(dead_code)]
+enum SendOption {
+    None,
+    File,
+    Link,
+}
 
 pub struct MainWindow {
     discovery: Arc<DeviceDiscovery>,
     discovered_devices: Arc<Mutex<Vec<DiscoveredDevice>>>,
     airdrop: Arc<Mutex<AirDrop>>,
     airplay: Arc<AirPlay>,
+    awdl_manager: Arc<Mutex<AwdlManager>>,
     is_receiving_screen: Arc<Mutex<bool>>,
     current_frame_info: Arc<Mutex<Option<(u32, u32, u64)>>>,
     cached_status: Arc<Mutex<AirPlayStatus>>,
     is_scanning: Arc<Mutex<bool>>,
     style: StyleConfig,
+    url_to_send: String,
+    show_link_dialog: bool,
+    selected_device: Option<DiscoveredDevice>,
 }
 
 impl MainWindow {
@@ -24,6 +41,7 @@ impl MainWindow {
         discovery: Arc<DeviceDiscovery>,
         airdrop: Arc<Mutex<AirDrop>>,
         airplay: Arc<AirPlay>,
+        awdl_manager: Arc<Mutex<AwdlManager>>,
     ) -> Self {
         let discovered_devices = Arc::new(Mutex::new(Vec::new()));
         let is_receiving_screen = Arc::new(Mutex::new(false));
@@ -51,11 +69,15 @@ impl MainWindow {
             discovered_devices,
             airdrop,
             airplay,
+            awdl_manager,
             is_receiving_screen,
             current_frame_info,
             cached_status,
             is_scanning,
             style: StyleConfig::default(),
+            url_to_send: String::new(),
+            show_link_dialog: false,
+            selected_device: None,
         }
     }
 
@@ -115,7 +137,7 @@ impl MainWindow {
         });
     }
 
-    fn draw_main_panel(&self, ctx: &egui::Context) {
+    fn draw_main_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             // Header
             ui.vertical_centered(|ui| {
@@ -135,8 +157,11 @@ impl MainWindow {
                     let scan_button = egui::Button::new(
                         RichText::new("🔄 Scan for Devices")
                             .size(16.0)
-                            .color(self.style.card_bg_color)
-                    ).min_size(egui::vec2(150.0, 35.0));
+                            .color(Color32::WHITE)
+                    )
+                    .min_size(egui::vec2(160.0, 36.0))
+                    .fill(self.style.primary_color)
+                    .rounding(6.0);
 
                     if ui.add(scan_button).clicked() {
                         self.handle_scan_click(ctx);
@@ -154,17 +179,34 @@ impl MainWindow {
                 .color(self.style.text_color));
             ui.add_space(10.0);
 
-            if let Ok(devices) = self.discovered_devices.try_lock() {
-                if devices.is_empty() {
+            // Clone devices in a separate scope to avoid holding an immutable borrow of `self`
+            let devices_clone_opt = {
+                let discovered = self.discovered_devices.clone();
+                // Ensure the temporary from try_lock() is dropped before the block ends
+                let tmp = if let Ok(devices) = discovered.try_lock() {
+                    Some(devices.clone())
+                } else {
+                    None
+                };
+                tmp
+            };
+
+            if let Some(devices_clone) = devices_clone_opt {
+                if devices_clone.is_empty() {
                     self.draw_empty_state(ui);
                 } else {
-                    self.draw_device_list(ui, &devices);
+                    self.draw_device_list(ui, &devices_clone);
                 }
+            }
+
+            // Persist the action dialog when a device is selected
+            if self.selected_device.is_some() {
+                self.show_action_dialog(ctx);
             }
         });
     }
 
-    fn draw_empty_state(&self, ui: &mut egui::Ui) {
+    fn draw_empty_state(&mut self, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
             ui.add_space(40.0);
             if let Ok(scanning) = self.is_scanning.try_lock() {
@@ -186,7 +228,7 @@ impl MainWindow {
         });
     }
 
-    fn draw_device_list(&self, ui: &mut egui::Ui, devices: &[DiscoveredDevice]) {
+    fn draw_device_list(&mut self, ui: &mut egui::Ui, devices: &[DiscoveredDevice]) {
         egui::ScrollArea::vertical()
             .max_height(ui.available_height() - 100.0)
             .show(ui, |ui| {
@@ -197,20 +239,56 @@ impl MainWindow {
                         device: device.clone(),
                         status,
                     };
-                    components::device_card_ui(ui, &card, &self.style);
+                    
+                    let response = components::device_card_ui(ui, &card, &self.style);
+                    
+                    // Handle click on device card
+                    if response.clicked() {
+                        match device.service_type {
+                            ServiceType::AirDrop | ServiceType::Companion => {
+                                // Treat Companion as an AirDrop-capable peer for send actions
+                                // The action dialog is shown persistently from draw_main_panel
+                                self.selected_device = Some(device.clone());
+                            },
+                            ServiceType::AirPlay => {
+                                // Toggle AirPlay streaming only for AirPlay devices
+                                let airplay = self.airplay.clone();
+                                tokio::spawn(async move {
+                                    match airplay.get_status().await {
+                                        AirPlayStatus::Idle => {
+                                            let _ = airplay.start_receiving().await;
+                                        },
+                                        AirPlayStatus::Connected => {
+                                            let _ = airplay.stop_receiving().await;
+                                        },
+                                        _ => {}
+                                    }
+                                });
+                            },
+                            _ => {}
+                        }
+                    }
+                    
                     ui.add_space(5.0);
                 }
             });
+        
+        // Show link dialog if needed
+        if self.show_link_dialog {
+            self.show_link_input_dialog(ui.ctx());
+        }
     }
 
     fn get_device_status(&self, device: &DiscoveredDevice) -> DeviceStatus {
         match device.service_type {
             crate::network::discovery::ServiceType::AirDrop => {
+                // Avoid blocking within a runtime; read cached status via try_lock
                 if let Ok(airdrop) = self.airdrop.try_lock() {
-                    DeviceStatus::AirDrop(
-                        tokio::runtime::Handle::current()
-                            .block_on(async { airdrop.get_status().await })
-                    )
+                    if let Ok(status) = airdrop.status.try_lock() {
+                        DeviceStatus::AirDrop(status.clone())
+                    } else {
+                        DeviceStatus::AirDrop(AirDropStatus::Idle)
+                    }
                 } else {
                     DeviceStatus::AirDrop(AirDropStatus::Idle)
                 }
@@ -249,5 +327,183 @@ impl MainWindow {
             }
             ctx_clone.request_repaint();
         });
+    }
+    
+    fn show_action_dialog(&mut self, ctx: &egui::Context) {
+        // Clone selected device to avoid holding an immutable borrow of `self` across the UI closure
+        let selected = self.selected_device.clone();
+        if let Some(device) = selected {
+            let frame = egui::Frame::none()
+                .fill(self.style.card_bg_color)
+                .stroke(egui::Stroke { width: 1.0, color: self.style.primary_color })
+                .rounding(10.0)
+                .shadow(egui::epaint::Shadow { extrusion: 10.0, color: Color32::from_black_alpha(120) });
+
+            egui::Window::new("Choose Action")
+                .collapsible(false)
+                .resizable(false)
+                .frame(frame)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.heading(RichText::new(format!("Send to {}", device.name))
+                            .color(self.style.text_color));
+                        ui.add_space(20.0);
+                        
+                        ui.horizontal(|ui| {
+                            let button = egui::Button::new(RichText::new("📁 Send File")
+                                .size(18.0)
+                                .color(Color32::WHITE))
+                                .min_size(egui::vec2(130.0, 42.0))
+                                .fill(self.style.accent_color)
+                                .rounding(6.0);
+                            if ui.add(button).clicked() {
+                                self.send_file_to_device(device.clone());
+                                self.selected_device = None;
+                            }
+                            
+                            ui.add_space(10.0);
+                            
+                            let button = egui::Button::new(RichText::new("🔗 Send Link")
+                                .size(18.0)
+                                .color(Color32::WHITE))
+                                .min_size(egui::vec2(130.0, 42.0))
+                                .fill(self.style.primary_color)
+                                .rounding(6.0);
+                            if ui.add(button).clicked() {
+                                self.show_link_dialog = true;
+                                // Keep the selected device for the link dialog
+                            }
+                        });
+                        
+                        ui.add_space(10.0);
+                        
+                        let cancel_btn = egui::Button::new(RichText::new("Cancel").color(Color32::WHITE))
+                            .min_size(egui::vec2(100.0, 36.0))
+                            .fill(self.style.error_color)
+                            .rounding(6.0);
+                        if ui.add(cancel_btn).clicked() {
+                            self.selected_device = None;
+                        }
+                    });
+                });
+        }
+    }
+    
+    fn show_link_input_dialog(&mut self, ctx: &egui::Context) {
+        let frame = egui::Frame::none()
+            .fill(self.style.card_bg_color)
+            .stroke(egui::Stroke { width: 1.0, color: self.style.primary_color })
+            .rounding(10.0)
+            .shadow(egui::epaint::Shadow { extrusion: 10.0, color: Color32::from_black_alpha(120) });
+
+        egui::Window::new("Send Link")
+            .collapsible(false)
+            .resizable(false)
+            .frame(frame)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.heading(RichText::new("Enter URL to send")
+                        .color(self.style.text_color));
+                    ui.add_space(10.0);
+                    
+                    let text_edit = egui::TextEdit::singleline(&mut self.url_to_send)
+                        .hint_text("https://example.com/...")
+                        .desired_width(300.0);
+                    ui.add(text_edit);
+                    
+                    ui.add_space(20.0);
+                    
+                    ui.horizontal(|ui| {
+                        let send_btn = egui::Button::new(RichText::new("Send").color(Color32::WHITE))
+                            .min_size(egui::vec2(100.0, 36.0))
+                            .fill(self.style.accent_color)
+                            .rounding(6.0);
+                        if ui.add(send_btn).clicked() && !self.url_to_send.trim().is_empty() {
+                            if let Some(device) = self.selected_device.clone() {
+                                self.send_link_to_device(device, self.url_to_send.clone());
+                            }
+                            self.show_link_dialog = false;
+                            self.selected_device = None;
+                            self.url_to_send.clear();
+                        }
+                        
+                        ui.add_space(10.0);
+                        
+                        let cancel_btn = egui::Button::new(RichText::new("Cancel").color(Color32::WHITE))
+                            .min_size(egui::vec2(100.0, 36.0))
+                            .fill(self.style.error_color)
+                            .rounding(6.0);
+                        if ui.add(cancel_btn).clicked() {
+                            self.show_link_dialog = false;
+                            self.selected_device = None;
+                            self.url_to_send.clear();
+                        }
+                    });
+                });
+            });
+    }
+    
+    fn send_file_to_device(&self, device: DiscoveredDevice) {
+        if let Some(path) = FileDialog::new()
+            .set_title(&format!("Select file to send to {}", device.name))
+            .pick_file() {
+            let airdrop = self.airdrop.clone();
+            // Use AirDrop standard port for AirDrop/Companion services
+            let port = match device.service_type {
+                ServiceType::AirDrop | ServiceType::Companion => 8771,
+                _ => device.port,
+            };
+            let addr = SocketAddr::new(device.address, port);
+
+            // Clone AirDrop instance without holding the lock across .await
+            let ad_opt = match airdrop.try_lock() {
+                Ok(guard) => Some(guard.clone()),
+                Err(_) => None,
+            };
+
+            tokio::spawn(async move {
+                if let Some(ad) = ad_opt {
+                    if let Err(e) = ad.send_file_to(addr, PathBuf::from(path)).await {
+                        error!("Failed to send file to {}: {}", addr, e);
+                    }
+                } else {
+                    warn!("AirDrop busy; could not acquire lock to send file");
+                }
+            });
+        }
+    }
+    
+    fn send_link_to_device(&self, device: DiscoveredDevice, url: String) {
+        // Create a temporary text file with the URL
+        let temp_path = std::env::temp_dir().join("airwin_link.url");
+        let url_content = format!("[InternetShortcut]\nURL={}", url);
+        
+        if std::fs::write(&temp_path, url_content.as_bytes()).is_ok() {
+            let airdrop = self.airdrop.clone();
+            // Use AirDrop standard port for AirDrop/Companion services
+            let port = match device.service_type {
+                ServiceType::AirDrop | ServiceType::Companion => 8771,
+                _ => device.port,
+            };
+            let addr = SocketAddr::new(device.address, port);
+
+            // Clone AirDrop instance without holding the lock across .await
+            let ad_opt = match airdrop.try_lock() {
+                Ok(guard) => Some(guard.clone()),
+                Err(_) => None,
+            };
+
+            tokio::spawn(async move {
+                if let Some(ad) = ad_opt {
+                    if let Err(e) = ad.send_file_to(addr, temp_path).await {
+                        error!("Failed to send link file to {}: {}", addr, e);
+                    }
+                } else {
+                    warn!("AirDrop busy; could not acquire lock to send link");
+                }
+            });
+        }
     }
 }

@@ -1,7 +1,7 @@
-use std::fmt;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum AirWinError {
     #[error("Network error: {0}")]
     NetworkError(String),
@@ -35,4 +35,5 @@ impl AirWinError {
     }
 }
 
+#[allow(dead_code)]
 pub type AirWinResult<T> = Result<T, AirWinError>;

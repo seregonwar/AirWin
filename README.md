@@ -1,7 +1,7 @@
 # 🚀 AirWin
 
 <p align="center">
-  <img src="https://img.shields.io/badge/rust-202124?style=for-the-badge&logo=c%2B%2B&logoColor=white" alt="Rust Badge"/>
+  <img src="https://img.shields.io/badge/rust-202124?style=for-the-badge&logo=rust&logoColor=white" alt="Rust Badge"/>
   <img src="https://img.shields.io/badge/version-v0.1.0b-blueviolet?style=for-the-badge" alt="Version Badge"/>
   <img src="https://img.shields.io/github/stars/seregonwar/AirWin?style=for-the-badge&logo=github&color=yellow" alt="GitHub Stars"/>
   <img src="https://img.shields.io/badge/license-MIT-2ea44f?style=for-the-badge&logo=open-source-initiative&logoColor=white" alt="License Badge"/>
@@ -96,4 +96,5 @@ Feel free to open a **Pull Request** or report issues in the tracker.
 ---
 
 > Built with ❤️ by [SeregonWar](https://github.com/seregonwar) 
+
 

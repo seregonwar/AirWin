@@ -40,18 +40,12 @@ All operations work **locally** over your network, without cloud or third-party 
 ---
 
 ## 🧱 Building
-
-### 1. Install dependencies:
-```bash
-sudo apt-get install cmake build-essential libboost-all-dev libssl-dev
-```
-
-### 2. Clone the repository:
+### 1. Clone the repository:
 ```bash
 git clone https://github.com/seregonwar/AirWin.git
 ```
 
-### 3. Build the project:
+### 2. Build the project:
 ```bash
 cd AirWin
 cargo build
@@ -95,6 +89,7 @@ Feel free to open a **Pull Request** or report issues in the tracker.
 ---
 
 > Built with ❤️ by [SeregonWar](https://github.com/seregonwar) 
+
 
 
 

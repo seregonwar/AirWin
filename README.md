@@ -54,9 +54,8 @@ git clone https://github.com/seregonwar/AirWin.git
 ### 3. Build the project:
 ```bash
 cd AirWin
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make
+cargo build
+cargo run
 ```
 
 ---
@@ -96,5 +95,6 @@ Feel free to open a **Pull Request** or report issues in the tracker.
 ---
 
 > Built with ❤️ by [SeregonWar](https://github.com/seregonwar) 
+
 
 

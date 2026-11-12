@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/rust-202124?style=for-the-badge&logo=rust&logoColor=white" alt="Rust Badge"/>
   <img src="https://img.shields.io/badge/version-v0.1.0b-blueviolet?style=for-the-badge" alt="Version Badge"/>
   <img src="https://img.shields.io/github/stars/seregonwar/AirWin?style=for-the-badge&logo=github&color=yellow" alt="GitHub Stars"/>
-  <img src="https://img.shields.io/badge/license-MIT-2ea44f?style=for-the-badge&logo=open-source-initiative&logoColor=white" alt="License Badge"/>
+  <img src="https://img.shields.io/badge/license-GPL--2.0-2ea44f?style=for-the-badge&logo=open-source-initiative&logoColor=white" alt="License Badge"/>
   <img src="https://img.shields.io/github/downloads/seregonwar/AirWin/total.svg?style=for-the-badge&color=orange&logo=cloud-download" alt="Total Downloads"/>
 </p>
 
@@ -76,7 +76,7 @@ cargo run
 
 ## 📜 License
 
-This project is licensed under the **MIT License**.  
+This project is licensed under the **GNU General Public License v2.0** (`GPL-2.0-only`).  
 See the `LICENSE` file for more details.
 
 ---

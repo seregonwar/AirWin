@@ -355,7 +355,7 @@ impl AboutView {
                 
                 Space::with_height(styles::spacing::MEDIUM),
                 
-                text("AirWin è distribuito sotto licenza MIT.")
+                text("AirWin è distribuito sotto licenza GNU GPL versione 2 (GPL-2.0-only).")
                     .size(14)
                     .style(styles::colors::TEXT_PRIMARY),
                 
